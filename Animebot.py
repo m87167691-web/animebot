@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 # ===================== SOZLAMALAR =====================
-BOT_TOKEN = "8993176197:AAHyj1v4Iwgag_6Q5xR9cW7OfCS3kYQ9UdY"
+BOT_TOKEN ="8993176197:AAHyj1v4Iwgag_6Q5xR9cW7OfCS3kYQ9UdY"
 JIKAN_API = "https://api.jikan.moe/v4"
 
 logging.basicConfig(
