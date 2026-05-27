@@ -1,3 +1,7 @@
 python-telegram-bot
 httpx
 aiosqlite
+python-telegram-bot
+httpx
+requests
+aiosqlite
