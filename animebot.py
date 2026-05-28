@@ -1,411 +1,335 @@
-import logging
+import sqlite3
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters,
-    ConversationHandler,
+    filters
 )
 
-# ===================== SOZLAMALAR =====================
-BOT_TOKEN ="8993176197:AAHyj1v4Iwgag_6Q5xR9cW7OfCS3kYQ9UdY"
-JIKAN_API = "https://api.jikan.moe/v4"
+# ===================== TOKEN =====================
+TOKEN = "8993176197:AAHyj1v4Iwgag_6Q5xR9cW7OfCS3kYQ9UdY
+"
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# ===================== KANAL IDlar =====================
+CHANNEL_UZ = -1004294479649
+CHANNEL_RU = -1003891594546
+CHANNEL_EN = -1003771352275
 
-# Conversation state
-WAITING_SEARCH = 1
+# ===================== BAZA =====================
+conn = sqlite3.connect('animes.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS movies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        file_id TEXT,
+        lang TEXT
+    )
+''')
+conn.commit()
 
-# ===================== TILLAR =====================
-LANGS = {
-    "uz": {
-        "flag": "🇺🇿",
-        "name": "O'zbek",
-        "welcome": (
-            "🎌 <b>Anime Bot ga xush kelibsiz!</b>\n\n"
-            "Men sizga anime haqida ma'lumot topib beraman.\n"
-            "Quyidagi tillardan birini tanlang:"
-        ),
-        "choose_lang": "🌐 Tilni tanlang:",
-        "lang_set": "✅ Til o'zbekchaga o'zgartirildi!",
-        "ask_search": "🔍 Qidirishni xohlagan anime nomini yozing:",
-        "searching": "⏳ Qidirilmoqda...",
-        "not_found": "❌ Anime topilmadi. Boshqa nom kiriting.",
-        "result_title": "🎌 Anime topildi!",
-        "score": "⭐ Reyting",
-        "episodes": "📺 Qismlar",
-        "status": "📌 Holat",
-        "genres": "🏷 Janrlar",
-        "year": "📅 Yil",
-        "synopsis": "📖 Tavsif",
-        "no_synopsis": "Tavsif mavjud emas.",
-        "more_results": "📋 Boshqa natijalar",
-        "new_search": "🔍 Yangi qidiruv",
-        "back_menu": "🏠 Bosh menyu",
-        "result_num": "Natija",
-        "of": "dan",
-        "next": "▶️ Keyingisi",
-        "prev": "◀️ Oldingisi",
-        "help": (
-            "ℹ️ <b>Yordam</b>\n\n"
-            "/start — Botni boshlash\n"
-            "/search — Anime qidirish\n"
-            "/lang — Tilni o'zgartirish\n"
-            "/help — Yordam\n\n"
-            "Faqat anime nomini yozing va men topib beraman! 🎌"
-        ),
-        "unknown": "❓ Tushunmadim. /help ni bosing.",
-    },
-    "ru": {
-        "flag": "🇷🇺",
-        "name": "Русский",
-        "welcome": (
-            "🎌 <b>Добро пожаловать в Anime Bot!</b>\n\n"
-            "Я помогу найти информацию об аниме.\n"
-            "Выберите язык:"
-        ),
-        "choose_lang": "🌐 Выберите язык:",
-        "lang_set": "✅ Язык изменён на русский!",
-        "ask_search": "🔍 Введите название аниме для поиска:",
-        "searching": "⏳ Идёт поиск...",
-        "not_found": "❌ Аниме не найдено. Попробуйте другое название.",
-        "result_title": "🎌 Аниме найдено!",
-        "score": "⭐ Рейтинг",
-        "episodes": "📺 Эпизоды",
-        "status": "📌 Статус",
-        "genres": "🏷 Жанры",
-        "year": "📅 Год",
-        "synopsis": "📖 Описание",
-        "no_synopsis": "Описание отсутствует.",
-        "more_results": "📋 Другие результаты",
-        "new_search": "🔍 Новый поиск",
-        "back_menu": "🏠 Главное меню",
-        "result_num": "Результат",
-        "of": "из",
-        "next": "▶️ Следующий",
-        "prev": "◀️ Предыдущий",
-        "help": (
-            "ℹ️ <b>Помощь</b>\n\n"
-            "/start — Запустить бота\n"
-            "/search — Поиск аниме\n"
-            "/lang — Сменить язык\n"
-            "/help — Помощь\n\n"
-            "Просто напишите название аниме и я найду! 🎌"
-        ),
-        "unknown": "❓ Не понял. Нажмите /help.",
-    },
-    "en": {
-        "flag": "🇬🇧",
-        "name": "English",
-        "welcome": (
-            "🎌 <b>Welcome to Anime Bot!</b>\n\n"
-            "I'll help you find information about anime.\n"
-            "Choose your language:"
-        ),
-        "choose_lang": "🌐 Choose language:",
-        "lang_set": "✅ Language set to English!",
-        "ask_search": "🔍 Enter the anime name to search:",
-        "searching": "⏳ Searching...",
-        "not_found": "❌ Anime not found. Try another name.",
-        "result_title": "🎌 Anime found!",
-        "score": "⭐ Score",
-        "episodes": "📺 Episodes",
-        "status": "📌 Status",
-        "genres": "🏷 Genres",
-        "year": "📅 Year",
-        "synopsis": "📖 Synopsis",
-        "no_synopsis": "No synopsis available.",
-        "more_results": "📋 More results",
-        "new_search": "🔍 New search",
-        "back_menu": "🏠 Main menu",
-        "result_num": "Result",
-        "of": "of",
-        "next": "▶️ Next",
-        "prev": "◀️ Previous",
-        "help": (
-            "ℹ️ <b>Help</b>\n\n"
-            "/start — Start the bot\n"
-            "/search — Search anime\n"
-            "/lang — Change language\n"
-            "/help — Help\n\n"
-            "Just type any anime name and I'll find it! 🎌"
-        ),
-        "unknown": "❓ Didn't understand. Press /help.",
-    },
-}
+users_language = {}
 
-def get_lang(context: ContextTypes.DEFAULT_TYPE) -> str:
-    return context.user_data.get("lang", "uz")
-
-def t(context, key):
-    return LANGS[get_lang(context)][key]
-
-# ===================== TIL TANLASH KLAVIATURASI =====================
-def lang_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🇺🇿 O'zbek", callback_data="lang_uz"),
-            InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
-            InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
-        ]
-    ])
-
-def main_menu_keyboard(context):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 " + ("Anime qidirish" if get_lang(context)=="uz" else "Поиск аниме" if get_lang(context)=="ru" else "Search Anime"), callback_data="do_search")],
-        [InlineKeyboardButton("🌐 " + ("Tilni o'zgartirish" if get_lang(context)=="uz" else "Сменить язык" if get_lang(context)=="ru" else "Change Language"), callback_data="change_lang")],
-        [InlineKeyboardButton("ℹ️ " + ("Yordam" if get_lang(context)=="uz" else "Помощь" if get_lang(context)=="ru" else "Help"), callback_data="show_help")],
-    ])
-
-# ===================== JIKAN API =====================
-def search_anime(query: str) -> list:
+# ===================== ANILIST API =====================
+def search_anime_anilist(query: str) -> list:
+    url = "https://graphql.anilist.co"
+    graphql = '''
+    query ($search: String) {
+        Page(page: 1, perPage: 5) {
+            media(search: $search, type: ANIME) {
+                id
+                title { romaji english native }
+                episodes
+                status
+                averageScore
+                startDate { year }
+                genres
+                description(asHtml: false)
+                coverImage { large }
+                siteUrl
+            }
+        }
+    }
+    '''
     try:
-        url = f"{JIKAN_API}/anime"
-        params = {"q": query, "limit": 5, "sfw": True}
-        resp = requests.get(url, params=params, timeout=10)
+        resp = requests.post(url, json={"query": graphql, "variables": {"search": query}}, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("data", [])
+            return data.get("data", {}).get("Page", {}).get("media", [])
     except Exception as e:
-        logger.error(f"Jikan API xatosi: {e}")
+        print(f"AniList xato: {e}")
     return []
 
-def format_anime(anime: dict, context) -> str:
-    title = anime.get("title", "—")
-    title_en = anime.get("title_english") or ""
-    score = anime.get("score") or "—"
+def format_anime(anime, lang, idx, total):
+    title = anime.get("title", {})
+    name = title.get("english") or title.get("romaji") or "—"
+    name_jp = title.get("native") or ""
+    score = anime.get("averageScore") or "—"
+    if score != "—":
+        score = f"{score}/100"
     episodes = anime.get("episodes") or "—"
     status = anime.get("status") or "—"
-    year = anime.get("year") or (anime.get("aired", {}).get("prop", {}).get("from", {}).get("year")) or "—"
-    genres = ", ".join([g["name"] for g in anime.get("genres", [])]) or "—"
-    synopsis_full = anime.get("synopsis") or t(context, "no_synopsis")
-    synopsis = synopsis_full[:300] + ("..." if len(synopsis_full) > 300 else "")
+    year = anime.get("startDate", {}).get("year") or "—"
+    genres = ", ".join(anime.get("genres", [])[:4]) or "—"
+    desc = (anime.get("description") or "")[:250]
+    if len(anime.get("description") or "") > 250:
+        desc += "..."
+    url = anime.get("siteUrl") or ""
 
-    title_line = f"<b>{title}</b>"
-    if title_en and title_en != title:
-        title_line += f"\n<i>{title_en}</i>"
+    nav = {
+        "uz": f"\n\n📄 Natija: {idx+1}/{total}",
+        "en": f"\n\n📄 Result: {idx+1}/{total}",
+        "ru": f"\n\n📄 Результат: {idx+1}/{total}"
+    }
 
-    return (
-        f"🎌 {title_line}\n\n"
-        f"{t(context, 'score')}: <b>{score}</b>\n"
-        f"{t(context, 'episodes')}: <b>{episodes}</b>\n"
-        f"{t(context, 'status')}: {status}\n"
-        f"{t(context, 'year')}: {year}\n"
-        f"{t(context, 'genres')}: {genres}\n\n"
-        f"{t(context, 'synopsis')}:\n{synopsis}"
-    )
-
-# ===================== HANDLERLAR =====================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = get_lang(context)
-    await update.message.reply_text(
-        LANGS[lang]["welcome"],
-        parse_mode="HTML",
-        reply_markup=lang_keyboard()
-    )
-
-async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = get_lang(context)
-    await update.message.reply_text(
-        LANGS[lang]["choose_lang"],
-        reply_markup=lang_keyboard()
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(t(context, "help"), parse_mode="HTML")
-
-async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(t(context, "ask_search"))
-    return WAITING_SEARCH
-
-async def handle_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
-    msg = await update.message.reply_text(t(context, "searching"))
-
-    results = search_anime(query)
-
-    if not results:
-        await msg.edit_text(t(context, "not_found"))
-        return ConversationHandler.END
-
-    context.user_data["results"] = results
-    context.user_data["result_index"] = 0
-
-    await msg.delete()
-    await send_anime_result(update, context, is_new=True)
-    return ConversationHandler.END
-
-async def send_anime_result(update, context, is_new=False, query_msg=None):
-    results = context.user_data.get("results", [])
-    idx = context.user_data.get("result_index", 0)
-    anime = results[idx]
-
-    text = format_anime(anime, context)
-    total = len(results)
-    nav = f"\n\n{t(context, 'result_num')} {idx+1} {t(context, 'of')} {total}"
-    text += nav
-
-    # Navigatsiya tugmalari
-    nav_buttons = []
-    if idx > 0:
-        nav_buttons.append(InlineKeyboardButton(t(context, "prev"), callback_data="prev_result"))
-    if idx < total - 1:
-        nav_buttons.append(InlineKeyboardButton(t(context, "next"), callback_data="next_result"))
-
-    keyboard = []
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-
-    # MyAnimeList linki
-    mal_url = anime.get("url")
-    if mal_url:
-        keyboard.append([InlineKeyboardButton("🔗 MyAnimeList", url=mal_url)])
-
-    keyboard.append([
-        InlineKeyboardButton(t(context, "new_search"), callback_data="do_search"),
-        InlineKeyboardButton(t(context, "back_menu"), callback_data="back_menu"),
-    ])
-
-    image_url = anime.get("images", {}).get("jpg", {}).get("large_image_url")
-
-    if is_new:
-        if image_url:
-            await update.message.reply_photo(
-                photo=image_url,
-                caption=text,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await update.message.reply_text(
-                text,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+    if lang == "uz":
+        return (
+            f"🎌 <b>{name}</b>\n"
+            + (f"<i>{name_jp}</i>\n" if name_jp else "")
+            + f"\n⭐ Reyting: <b>{score}</b>\n"
+            f"📺 Qismlar: <b>{episodes}</b>\n"
+            f"📌 Holat: {status}\n"
+            f"📅 Yil: {year}\n"
+            f"🏷 Janr: {genres}\n\n"
+            f"📖 {desc}\n"
+            f"🔗 <a href='{url}'>AniList</a>"
+            + nav["uz"]
+        )
+    elif lang == "en":
+        return (
+            f"🎌 <b>{name}</b>\n"
+            + (f"<i>{name_jp}</i>\n" if name_jp else "")
+            + f"\n⭐ Score: <b>{score}</b>\n"
+            f"📺 Episodes: <b>{episodes}</b>\n"
+            f"📌 Status: {status}\n"
+            f"📅 Year: {year}\n"
+            f"🏷 Genres: {genres}\n\n"
+            f"📖 {desc}\n"
+            f"🔗 <a href='{url}'>AniList</a>"
+            + nav["en"]
+        )
     else:
-        # Callback orqali yangilash
-        query = update.callback_query
-        if image_url:
-            try:
-                await query.edit_message_media(
-                    media=__import__("telegram").InputMediaPhoto(
-                        media=image_url, caption=text, parse_mode="HTML"
-                    ),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            except Exception:
-                await query.edit_message_caption(
-                    caption=text,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-        else:
-            try:
-                await query.edit_message_text(
-                    text=text,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            except Exception:
-                pass
+        return (
+            f"🎌 <b>{name}</b>\n"
+            + (f"<i>{name_jp}</i>\n" if name_jp else "")
+            + f"\n⭐ Рейтинг: <b>{score}</b>\n"
+            f"📺 Эпизоды: <b>{episodes}</b>\n"
+            f"📌 Статус: {status}\n"
+            f"📅 Год: {year}\n"
+            f"🏷 Жанры: {genres}\n\n"
+            f"📖 {desc}\n"
+            f"🔗 <a href='{url}'>AniList</a>"
+            + nav["ru"]
+        )
 
+def nav_keyboard(idx, total, lang):
+    buttons = []
+    row = []
+    if idx > 0:
+        row.append(InlineKeyboardButton("◀️", callback_data=f"nav_{idx-1}"))
+    if idx < total - 1:
+        row.append(InlineKeyboardButton("▶️", callback_data=f"nav_{idx+1}"))
+    if row:
+        buttons.append(row)
+    new_search = {"uz": "🔍 Yangi qidiruv", "en": "🔍 New search", "ru": "🔍 Новый поиск"}
+    buttons.append([InlineKeyboardButton(new_search[lang], callback_data="new_search")])
+    return InlineKeyboardMarkup(buttons)
+
+# ===================== KANALDAN AVTOSAQLASH =====================
+# Forward va to'g'ridan to'g'ri yuklangan videolarni ham saqlaydi
+async def auto_save_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    post = update.channel_post
+    if not post:
+        return
+
+    # Video yoki forward qilingan video
+    video = post.video
+    if not video:
+        return
+
+    chat_id = post.chat.id
+    video_id = video.file_id
+    caption = post.caption or post.text or "Nomsiz qism"
+    # Caption dan faqat birinchi qatorni olish (nom sifatida)
+    caption = caption.split('\n')[0].strip()
+
+    if chat_id == CHANNEL_UZ:
+        lang = "uz"
+    elif chat_id == CHANNEL_RU:
+        lang = "ru"
+    elif chat_id == CHANNEL_EN:
+        lang = "en"
+    else:
+        return
+
+    # Bazada mavjudligini tekshirish
+    cursor.execute("SELECT id FROM movies WHERE file_id = ?", (video_id,))
+    if cursor.fetchone():
+        print(f"⚠️ Allaqachon bor: {caption}")
+        return
+
+    cursor.execute("INSERT INTO movies (name, file_id, lang) VALUES (?, ?, ?)", (caption.lower(), video_id, lang))
+    conn.commit()
+    print(f"✅ Saqlandi: [{lang.upper()}] {caption}")
+
+# ===================== START =====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["🇺🇿 Uzbek", "🇺🇸 English", "🇷🇺 Русский"]]
+    await update.message.reply_text(
+        "🎌 <b>Anime Bot ga xush kelibsiz!</b>\n\nTilni tanlang 👇",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+# ===================== HELP =====================
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = users_language.get(update.message.from_user.id, "uz")
+    texts = {
+        "uz": "ℹ️ <b>Yordam</b>\n\n/start — Botni boshlash\n/lang — Tilni o'zgartirish\n/help — Yordam\n\n🎌 Anime nomini yozing — men topib beraman!",
+        "en": "ℹ️ <b>Help</b>\n\n/start — Start bot\n/lang — Change language\n/help — Help\n\n🎌 Type anime name — I'll find it!",
+        "ru": "ℹ️ <b>Помощь</b>\n\n/start — Запуск\n/lang — Язык\n/help — Помощь\n\n🎌 Напишите название аниме — найду!"
+    }
+    await update.message.reply_text(texts[lang], parse_mode="HTML")
+
+# ===================== LANG =====================
+async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["🇺🇿 Uzbek", "🇺🇸 English", "🇷🇺 Русский"]]
+    await update.message.reply_text(
+        "🌐 Tilni tanlang:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+# ===================== XABARLARNI QAYTA ISHLASH =====================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text
+
+    if text in ["🇺🇿 Uzbek", "🇺🇸 English", "🇷🇺 Русский"]:
+        if text == "🇺🇿 Uzbek":
+            users_language[user_id] = "uz"
+            await update.message.reply_text("✅ Til: O'zbek\n\n🎌 Anime nomini yuboring:")
+        elif text == "🇺🇸 English":
+            users_language[user_id] = "en"
+            await update.message.reply_text("✅ Language: English\n\n🎌 Send anime name:")
+        else:
+            users_language[user_id] = "ru"
+            await update.message.reply_text("✅ Язык: Русский\n\n🎌 Отправьте название аниме:")
+        return
+
+    language = users_language.get(user_id, "uz")
+    msgs = {"uz": "🔍 Qidirilmoqda...", "en": "🔍 Searching...", "ru": "🔍 Поиск..."}
+    searching_msg = await update.message.reply_text(msgs[language])
+    query = text.lower().strip()
+
+    # 1. Tanlangan tilda bazadan qidirish
+    cursor.execute("SELECT file_id, name FROM movies WHERE name LIKE ? AND lang = ?", ('%' + query + '%', language))
+    results = cursor.fetchall()
+    if results:
+        await searching_msg.delete()
+        found = {"uz": "✅ O'zbekcha topildi!", "en": "✅ Found!", "ru": "✅ Найдено!"}
+        for file_id, name in results[:3]:
+            await update.message.reply_video(video=file_id, caption=f"🎌 {name}\n{found[language]}")
+        return
+
+    # 2. Boshqa tillarda qidirish
+    lang_names = {"uz": "🇺🇿 O'zbekcha", "ru": "🇷🇺 Ruscha", "en": "🇬🇧 Inglizcha"}
+    for other_lang in [l for l in ["uz", "ru", "en"] if l != language]:
+        cursor.execute("SELECT file_id, name FROM movies WHERE name LIKE ? AND lang = ?", ('%' + query + '%', other_lang))
+        other_results = cursor.fetchall()
+        if other_results:
+            await searching_msg.delete()
+            warn = {
+                "uz": f"⚠️ O'zbekcha topilmadi. {lang_names[other_lang]} versiyasi:",
+                "en": f"⚠️ Not found. {lang_names[other_lang]} version:",
+                "ru": f"⚠️ Не найдено. Версия {lang_names[other_lang]}:"
+            }
+            await update.message.reply_text(warn[language])
+            for file_id, name in other_results[:3]:
+                await update.message.reply_video(video=file_id, caption=f"🎌 {name}")
+            return
+
+    # 3. AniList API
+    animes = search_anime_anilist(text)
+    if not animes:
+        not_found = {"uz": "❌ Anime topilmadi.", "en": "❌ Not found.", "ru": "❌ Не найдено."}
+        await searching_msg.edit_text(not_found[language])
+        return
+
+    await searching_msg.delete()
+    context.user_data["animes"] = animes
+    context.user_data["anime_idx"] = 0
+    context.user_data["lang"] = language
+
+    no_video = {
+        "uz": "📭 Video hali yuklanmagan. Anime ma'lumoti:",
+        "en": "📭 No video yet. Anime info:",
+        "ru": "📭 Видео нет. Информация:"
+    }
+    await update.message.reply_text(no_video[language])
+
+    anime = animes[0]
+    caption = format_anime(anime, language, 0, len(animes))
+    image_url = anime.get("coverImage", {}).get("large")
+    keyboard = nav_keyboard(0, len(animes), language)
+
+    try:
+        if image_url:
+            await update.message.reply_photo(photo=image_url, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+        else:
+            await update.message.reply_text(caption, parse_mode="HTML", reply_markup=keyboard)
+    except Exception:
+        await update.message.reply_text(caption, parse_mode="HTML", reply_markup=keyboard)
+
+# ===================== INLINE KNOPKALAR =====================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    if data.startswith("lang_"):
-        lang = data.split("_")[1]
-        context.user_data["lang"] = lang
-        await query.edit_message_text(
-            LANGS[lang]["lang_set"] + "\n\n" + LANGS[lang]["welcome"],
-            parse_mode="HTML",
-            reply_markup=main_menu_keyboard(context)
-        )
+    if data == "new_search":
+        lang = context.user_data.get("lang", "uz")
+        msgs = {"uz": "🔍 Anime nomini yuboring:", "en": "🔍 Send anime name:", "ru": "🔍 Отправьте название:"}
+        await query.message.reply_text(msgs[lang])
+        return
 
-    elif data == "change_lang":
-        await query.edit_message_text(
-            t(context, "choose_lang"),
-            reply_markup=lang_keyboard()
-        )
-
-    elif data == "back_menu":
-        lang = get_lang(context)
-        await query.edit_message_text(
-            LANGS[lang]["welcome"],
-            parse_mode="HTML",
-            reply_markup=main_menu_keyboard(context)
-        )
-
-    elif data == "do_search":
-        await query.message.reply_text(t(context, "ask_search"))
-        context.user_data["waiting_search"] = True
-
-    elif data == "show_help":
-        await query.edit_message_text(
-            t(context, "help"),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton(t(context, "back_menu"), callback_data="back_menu")
-            ]])
-        )
-
-    elif data == "next_result":
-        context.user_data["result_index"] += 1
-        await send_anime_result(update, context, is_new=False)
-
-    elif data == "prev_result":
-        context.user_data["result_index"] -= 1
-        await send_anime_result(update, context, is_new=False)
-
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("waiting_search"):
-        context.user_data["waiting_search"] = False
-        query_text = update.message.text.strip()
-        msg = await update.message.reply_text(t(context, "searching"))
-
-        results = search_anime(query_text)
-
-        if not results:
-            await msg.edit_text(t(context, "not_found"))
+    if data.startswith("nav_"):
+        idx = int(data.split("_")[1])
+        animes = context.user_data.get("animes", [])
+        language = context.user_data.get("lang", "uz")
+        if not animes:
             return
-
-        context.user_data["results"] = results
-        context.user_data["result_index"] = 0
-        await msg.delete()
-        await send_anime_result(update, context, is_new=True)
-    else:
-        await update.message.reply_text(t(context, "unknown"))
+        context.user_data["anime_idx"] = idx
+        anime = animes[idx]
+        caption = format_anime(anime, language, idx, len(animes))
+        image_url = anime.get("coverImage", {}).get("large")
+        keyboard = nav_keyboard(idx, len(animes), language)
+        try:
+            if image_url:
+                from telegram import InputMediaPhoto
+                await query.edit_message_media(
+                    media=InputMediaPhoto(media=image_url, caption=caption, parse_mode="HTML"),
+                    reply_markup=keyboard
+                )
+            else:
+                await query.edit_message_text(caption, parse_mode="HTML", reply_markup=keyboard)
+        except Exception:
+            try:
+                await query.edit_message_caption(caption=caption, parse_mode="HTML", reply_markup=keyboard)
+            except Exception:
+                pass
 
 # ===================== MAIN =====================
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("search", search_command)],
-        states={
-            WAITING_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_input)],
-        },
-        fallbacks=[CommandHandler("start", start)],
-    )
-
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    print("🤖 Anime Bot ishga tushdi!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.VIDEO, auto_save_to_db))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("🤖 Anime Bot ishlayapti...")
+    app.run_polling()
